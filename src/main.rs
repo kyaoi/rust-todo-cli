@@ -1,13 +1,31 @@
-use clap::{Arg, Command};
+use clap::Parser;
 use directories::ProjectDirs;
+use promptuity::prompts::{Select, SelectOption};
+use promptuity::themes::FancyTheme;
+use promptuity::{Error, Promptuity, Term};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Todo {
-    task: String,
+    title: String,
+    description: String,
     done: bool,
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short, long)]
+    add: bool,
+
+    #[arg(short, long)]
+    list: bool,
+
+    #[arg(short, long)]
+    select: bool,
 }
 
 const FILE_NAME: &str = "todos.json";
@@ -35,47 +53,78 @@ fn save_todos(todos: &Vec<Todo>) {
     fs::write(path, content).unwrap();
 }
 
-fn main() {
-    let matches = Command::new("todo")
-        .version("1.0")
-        .about("CLI TODO App in Rust")
-        .subcommand(Command::new("add").arg(Arg::new("task").required(true)))
-        .subcommand(Command::new("list"))
-        .subcommand(Command::new("done").arg(Arg::new("index").required(true)))
-        .subcommand(Command::new("remove").arg(Arg::new("index").required(true)))
-        .get_matches();
+fn prompt_input(prompt: &str) -> String {
+    print!("{}: ", prompt);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_string()
+}
 
+fn select_todo_action(todos: &mut Vec<Todo>) -> Result<(), Error> {
+    let mut term = Term::default();
+    let mut theme = FancyTheme::default();
+    let mut p = Promptuity::new(&mut term, &mut theme);
+
+    p.term().clear()?;
+    p.with_intro("Select a task to modify.").begin()?;
+
+    let select_options: Vec<SelectOption<usize>> = todos
+        .iter()
+        .enumerate()
+        .map(|(i, todo)| {
+            SelectOption::new(
+                format!("{} - {}", if todo.done { "✅" } else { "❌" }, todo.title),
+                i,
+            )
+        })
+        .collect();
+
+    if let Some(selected_task) =
+        p.prompt(Select::new("Which task do you want to modify?", select_options).as_mut())?
+    {
+        let task_value = selected_task.value; // SelectOption<usize> の value を取得
+
+        p.with_outro(format!("SELECTED: {}", task_value)).finish()?;
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<(), Error> {
+    let args = Args::parse();
     let mut todos = load_todos();
 
-    if let Some(matches) = matches.subcommand_matches("add") {
-        let task = matches.get_one::<String>("task").unwrap().to_string();
-        todos.push(Todo { task, done: false });
+    if args.add {
+        let title = prompt_input("📌 Enter task title");
+        let description = prompt_input("📝 Enter task description");
+
+        let todo = Todo {
+            title,
+            description,
+            done: false,
+        };
+
+        todos.push(todo);
         save_todos(&todos);
-        println!("Added new task!");
+        println!("✅ Added new task successfully!");
     }
 
-    if matches.subcommand_matches("list").is_some() {
+    if args.list {
+        println!("\n📝 TODO List:");
         for (i, todo) in todos.iter().enumerate() {
-            let status = if todo.done { "[Done]" } else { "[ ]" };
-            println!("{} {} - {}", i, status, todo.task);
+            let status = if todo.done {
+                "✅ Done"
+            } else {
+                "❌ Not Done"
+            };
+            println!("{} - [{}] {}: {}", i, status, todo.title, todo.description);
         }
     }
 
-    if let Some(matches) = matches.subcommand_matches("done") {
-        let index: usize = matches.get_one::<String>("index").unwrap().parse().unwrap();
-        if index < todos.len() {
-            todos[index].done = true;
-            save_todos(&todos);
-            println!("Marked as done!");
-        }
+    if args.select {
+        select_todo_action(&mut todos)?;
     }
 
-    if let Some(matches) = matches.subcommand_matches("remove") {
-        let index: usize = matches.get_one::<String>("index").unwrap().parse().unwrap();
-        if index < todos.len() {
-            todos.remove(index);
-            save_todos(&todos);
-            println!("Removed task!");
-        }
-    }
+    Ok(())
 }
