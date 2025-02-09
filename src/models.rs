@@ -21,4 +21,6 @@ pub enum Commands {
     Add,
     List,
     Select,
+    Edit,
+    Delete,
 }
